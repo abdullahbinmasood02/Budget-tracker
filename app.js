@@ -645,11 +645,12 @@ function render() {
 }
 
 let toastTimer;
-/** Shows a short message; pass `action` ({ label, onClick }) to add a button such as Undo. */
-function toast(msg, action) {
+/** Shows a short message; pass `actions` ({ label, onClick } or a list of them) to add buttons such as Undo. */
+function toast(msg, actions) {
   const el = document.getElementById('toast');
   el.textContent = msg;
-  if (action) {
+  const list = actions ? [].concat(actions) : [];
+  for (const action of list) {
     const btn = document.createElement('button');
     btn.className = 'toast-btn';
     btn.textContent = action.label;
@@ -661,7 +662,7 @@ function toast(msg, action) {
   }
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, action ? 7000 : 2600);
+  toastTimer = setTimeout(() => { el.hidden = true; }, list.length ? 8000 : 2600);
 }
 
 /* ---------- Modal forms ---------- */
@@ -748,7 +749,7 @@ function txForm(tx) {
 
     if (tx) {
       // Remember the category chosen for a bank-SMS merchant so future messages use it.
-      if (tx.merchant && fields.categoryId !== tx.categoryId) state.merchantRules[merchantKey(tx.merchant)] = fields.categoryId;
+      if (tx.merchant && !isMixedMerchant(tx.merchant) && fields.categoryId !== tx.categoryId) state.merchantRules[merchantKey(tx.merchant)] = fields.categoryId;
       Object.assign(tx, fields, { date: d.date });
       toast('Transaction updated');
     } else if (d.repeat) {
@@ -868,6 +869,11 @@ const MERCHANT_KEYWORDS = {
   Education: ['udemy', 'coursera', 'bookstore', 'university', 'school'],
 };
 
+// Delivery apps that sell both restaurant meals and groceries: never auto-learn a category
+// for them, and offer a one-tap switch when one of their payments arrives.
+const MIXED_MERCHANTS = ['talabat', 'delivery hero', 'deliveroo', 'careem food'];
+const isMixedMerchant = name => MIXED_MERCHANTS.some(w => String(name || '').toLowerCase().includes(w));
+
 function hashText(s) {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
@@ -974,7 +980,7 @@ function addSmsTransaction(p) {
 
 function announceSmsTransaction(tx, p) {
   const msg = `${tx.type === 'income' ? 'Received' : 'Added'} ${money(tx.amount)}${tx.merchant ? ` · ${tx.merchant}` : ''} → ${catById(tx.categoryId).name}`;
-  toast(p.currency !== state.settings.currency ? `${msg} (message was in ${p.currency})` : msg, {
+  const actions = [{
     label: 'Undo',
     onClick: () => {
       state.transactions = state.transactions.filter(t => t.id !== tx.id);
@@ -982,24 +988,71 @@ function announceSmsTransaction(tx, p) {
       render();
       toast('Removed');
     },
-  });
+  }];
+  if (tx.type === 'expense' && isMixedMerchant(tx.merchant)) {
+    const current = catById(tx.categoryId).name;
+    const other = categoriesOf('expense').find(c => c.name === (current === 'Groceries' ? 'Dining out' : 'Groceries'));
+    if (other) {
+      actions.unshift({
+        label: other.name,
+        onClick: () => {
+          tx.categoryId = other.id;
+          save();
+          render();
+          toast(`Moved to ${other.name}`);
+        },
+      });
+    }
+  }
+  toast(p.currency !== state.settings.currency ? `${msg} (message was in ${p.currency})` : msg, actions);
 }
 
 /** Handles "#import=…" links that carry a batch of past transactions
  * as base64 JSON: { t: [[date, "e"|"i", amount, merchant, categoryName, note?], …] }.
  * Rows already in the app (same date, type, amount and merchant) are skipped. */
+/** Reads the rows from a "#import=" / "#update=" link, or returns null if the link is damaged. */
+function decodeLinkRows(encoded) {
+  try {
+    const bytes = Uint8Array.from(atob(decodeURIComponent(encoded).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const rows = JSON.parse(new TextDecoder().decode(bytes)).t;
+    return Array.isArray(rows) ? rows : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Handles "#update=…" links that re-categorise existing transactions:
+ * { t: [[date, amount, merchant, categoryName, note?], …] }, matched on date, amount and merchant. */
+function handleIncomingUpdate() {
+  const m = location.hash.match(/^#update=([\s\S]*)$/);
+  if (!m) return null;
+  history.replaceState(null, '', `${location.pathname}${location.search}#transactions`);
+  const rows = decodeLinkRows(m[1]);
+  if (!rows) return () => toast('This update link is damaged. Copy the whole link and try again.');
+  if (!confirm(`Update ${rows.length} transactions?`)) return null;
+
+  let changed = 0;
+  for (const [date, amount, merchant, catName, note] of rows) {
+    const name = String(merchant || '').toLowerCase();
+    const tx = state.transactions.find(t => t.date === date && Math.abs(t.amount - amount) < 0.005
+      && (t.merchant || t.note || '').toLowerCase() === name);
+    const cat = state.categories.find(c => c.name.toLowerCase() === String(catName).toLowerCase());
+    if (!tx || !cat) continue;
+    tx.categoryId = cat.id;
+    if (note) tx.note = note;
+    changed++;
+  }
+  save();
+  const missing = rows.length - changed;
+  return () => toast(`Updated ${changed} transaction${changed === 1 ? '' : 's'}${missing ? ` · ${missing} not found` : ''}`);
+}
+
 function handleIncomingImport() {
   const m = location.hash.match(/^#import=([\s\S]*)$/);
   if (!m) return null;
   history.replaceState(null, '', `${location.pathname}${location.search}#transactions`);
-  let rows;
-  try {
-    const bytes = Uint8Array.from(atob(decodeURIComponent(m[1]).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-    rows = JSON.parse(new TextDecoder().decode(bytes)).t;
-    if (!Array.isArray(rows)) throw new Error('no rows');
-  } catch {
-    return () => toast('This import link is damaged. Copy the whole link and try again.');
-  }
+  const rows = decodeLinkRows(m[1]);
+  if (!rows) return () => toast('This import link is damaged. Copy the whole link and try again.');
   if (!confirm(`Add ${rows.length} past transactions to your budget?`)) return null;
 
   let added = 0;
@@ -1284,7 +1337,7 @@ function routeFromHash() {
   render();
 }
 window.addEventListener('hashchange', () => {
-  const notify = handleIncomingSms() || handleIncomingImport();
+  const notify = handleIncomingSms() || handleIncomingImport() || handleIncomingUpdate();
   routeFromHash();
   if (notify) notify();
 });
@@ -1301,7 +1354,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 const added = runSchedules();
-const smsNotify = handleIncomingSms() || handleIncomingImport();
+const smsNotify = handleIncomingSms() || handleIncomingImport() || handleIncomingUpdate();
 routeFromHash();
 if (smsNotify) smsNotify();
 else if (added) toast(`${added} scheduled transaction${added === 1 ? '' : 's'} added`);
