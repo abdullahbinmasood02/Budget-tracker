@@ -950,7 +950,8 @@ function handleIncomingImport() {
   history.replaceState(null, '', `${location.pathname}${location.search}#transactions`);
   let rows;
   try {
-    rows = JSON.parse(atob(decodeURIComponent(m[1]).replace(/-/g, '+').replace(/_/g, '/'))).t;
+    const bytes = Uint8Array.from(atob(decodeURIComponent(m[1]).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    rows = JSON.parse(new TextDecoder().decode(bytes)).t;
     if (!Array.isArray(rows)) throw new Error('no rows');
   } catch {
     return () => toast('This import link is damaged. Copy the whole link and try again.');
