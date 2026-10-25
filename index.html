@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Plan monthly budgets, track expenses and income, schedule recurring payments and save toward goals.">
+  <title>Budget Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◎</span>
+      <span>Budget Tracker</span>
+    </div>
+    <div class="month-nav" id="monthNav">
+      <button id="prevMonth" class="icon-btn" aria-label="Previous month">‹</button>
+      <button id="monthLabel" class="month-label" title="Jump to current month"></button>
+      <button id="nextMonth" class="icon-btn" aria-label="Next month">›</button>
+    </div>
+    <button id="addTxBtn" class="btn primary">+ Add</button>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <a href="#dashboard" data-view="dashboard">Dashboard</a>
+    <a href="#transactions" data-view="transactions">Transactions</a>
+    <a href="#budgets" data-view="budgets">Budgets</a>
+    <a href="#scheduled" data-view="scheduled">Scheduled</a>
+    <a href="#goals" data-view="goals">Goals</a>
+    <a href="#settings" data-view="settings">Settings</a>
+  </nav>
+
+  <main id="view" class="view"></main>
+
+  <dialog id="modal" class="modal">
+    <form id="modalForm" novalidate></form>
+  </dialog>
+
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
