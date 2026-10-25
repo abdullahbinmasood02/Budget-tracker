@@ -42,6 +42,13 @@ function shiftMonth(key, delta) {
 }
 
 function monthName(key, short = false) {
+  if (startDay() > 1) {
+    const start = parseDate(periodStart(key));
+    if (short) return start.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    const end = parseDate(periodEnd(key));
+    const sameYear = start.getFullYear() === end.getFullYear();
+    return `${start.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) })} – ${end.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  }
   const [y, m] = key.split('-').map(Number);
   const opts = short ? { month: 'short' } : { month: 'long', year: 'numeric' };
   return new Date(y, m - 1, 1).toLocaleDateString(undefined, opts);
@@ -125,11 +132,13 @@ function save() {
 let state = load();
 const ui = {
   view: 'dashboard',
-  month: monthKey(todayStr()),
+  month: '',
   search: '',
   filterType: '',
   filterCat: '',
 };
+
+ui.month = periodKeyFor(todayStr());
 
 const catById = id => state.categories.find(c => c.id === id) || { id: '', name: 'Uncategorized', color: '#9ca3af', kind: 'expense' };
 const categoriesOf = kind => state.categories.filter(c => c.kind === kind);
@@ -185,7 +194,30 @@ function upcoming(days) {
 
 /* ---------- Calculations ---------- */
 
-const txInMonth = key => state.transactions.filter(t => monthKey(t.date) === key);
+/* A budget "month" can start on any day (e.g. payday). It is identified by the
+   calendar month it starts in: with a start day of 27, "2026-09" is 27 Sep – 26 Oct. */
+function startDay() {
+  return Math.min(31, Math.max(1, Number(state.settings.monthStartDay) || 1));
+}
+
+function periodStart(key) {
+  const [y, m] = key.split('-').map(Number);
+  return toDateStr(new Date(y, m - 1, Math.min(startDay(), daysInMonth(y, m - 1))));
+}
+
+function periodEnd(key) {
+  return addDays(periodStart(shiftMonth(key, 1)), -1);
+}
+
+function periodKeyFor(dateStr) {
+  const key = monthKey(dateStr);
+  return dateStr < periodStart(key) ? shiftMonth(key, -1) : key;
+}
+
+function txInMonth(key) {
+  const start = periodStart(key), end = periodEnd(key);
+  return state.transactions.filter(t => t.date >= start && t.date <= end);
+}
 
 function monthStats(key) {
   const stats = { income: 0, expense: 0, byCat: {} };
@@ -203,7 +235,7 @@ function monthStats(key) {
 
 function defaultDateForMonth() {
   const today = todayStr();
-  return monthKey(today) === ui.month ? today : `${ui.month}-01`;
+  return periodKeyFor(today) === ui.month ? today : periodStart(ui.month);
 }
 
 /* ---------- Reusable pieces of markup ---------- */
@@ -269,7 +301,7 @@ function donut(segments) {
   return `<svg viewBox="0 0 160 160" class="donut" role="img" aria-label="Spending by category">
     ${arcs.join('')}
     <text x="80" y="74" text-anchor="middle" class="donut-label">Spent</text>
-    <text x="80" y="94" text-anchor="middle" class="donut-value">${esc(money(total))}</text>
+    <text x="80" y="94" text-anchor="middle" class="donut-value"${money(total).length > 10 ? ' style="font-size:12px"' : ''}>${esc(money(total))}</text>
   </svg>`;
 }
 
@@ -399,6 +431,13 @@ function viewTransactions() {
   </section>`;
 }
 
+function startDayControl() {
+  const opts = Array.from({ length: 31 }, (_, i) => i + 1)
+    .map(d => `<option value="${d}" ${startDay() === d ? 'selected' : ''}>${d === 1 ? '1st (calendar month)' : `Day ${d}`}</option>`).join('');
+  return `<label>Budget month starts on
+    <select data-setting="monthStartDay">${opts}</select></label>`;
+}
+
 function viewBudgets() {
   const s = monthStats(ui.month);
   const expenseCats = categoriesOf('expense');
@@ -436,8 +475,9 @@ function viewBudgets() {
 
   return `<section class="card">
     <h2>Plan your month</h2>
-    <p class="muted">Enter what you expect to earn each month, then give each category a monthly limit. Limits repeat every month; the bars show ${monthName(ui.month)}.</p>
+    <p class="muted">Enter what you expect to earn each month, then give each category a monthly limit. Limits repeat every month; the bars show ${monthName(ui.month)}. Set the start day to your payday so each budget month begins with your salary.</p>
     <div class="plan-grid">
+      ${startDayControl()}
       <label>Expected monthly income
         <input type="number" min="0" step="any" inputmode="decimal" data-setting="plannedIncome" value="${planned || ''}" placeholder="0"></label>
       <div class="stat"><div class="stat-label">Allocated to categories</div><div class="stat-value">${money(allocated)}</div></div>
@@ -539,6 +579,10 @@ function viewSettings() {
     <div class="setting-row">
       <div><div>Currency</div><div class="desc">Used to display every amount.</div></div>
       <select data-setting="currency" aria-label="Currency">${currencyOpts}</select>
+    </div>
+    <div class="setting-row">
+      <div><div>Budget month</div><div class="desc">Start each budget month on your payday, e.g. day 27 → 27th to 26th. Applies to the dashboard, transactions and budgets.</div></div>
+      <div>${startDayControl()}</div>
     </div>
     <div class="setting-row">
       <div><div>Back up your data</div><div class="desc">Your data lives only in this browser. Download a backup to keep it safe or move it to another device.</div></div>
@@ -989,7 +1033,7 @@ function handleIncomingSms() {
   const p = parseBankSms(text);
   if (p.error) return () => toast(p.error);
   const tx = addSmsTransaction(p);
-  ui.month = monthKey(p.date);
+  ui.month = periodKeyFor(p.date);
   return tx ? () => announceSmsTransaction(tx, p) : () => toast('This message was already added.');
 }
 
@@ -1174,7 +1218,7 @@ const ACTIONS = {
     const hasData = state.transactions.length || state.recurring.length || state.goals.length;
     if (hasData && !confirm('Replace all current data with sample data?')) return;
     loadSampleData();
-    ui.month = monthKey(todayStr());
+    ui.month = periodKeyFor(todayStr());
     toast('Sample data loaded');
     location.hash = '#dashboard';
     return true;
@@ -1202,6 +1246,10 @@ $view.addEventListener('change', e => {
   if (el.dataset.budgetId) {
     const c = findIn('categories', el.dataset.budgetId);
     c.budget = Math.max(0, parseFloat(el.value) || 0);
+  } else if (el.dataset.setting === 'monthStartDay') {
+    state.settings.monthStartDay = Number(el.value) || 1;
+    ui.month = periodKeyFor(todayStr());
+    toast(startDay() === 1 ? 'Budget months follow the calendar' : `Budget months now run from day ${startDay()}`);
   } else if (el.dataset.setting === 'plannedIncome') {
     state.settings.plannedIncome = Math.max(0, parseFloat(el.value) || 0);
   } else if (el.dataset.setting === 'currency') {
@@ -1228,7 +1276,7 @@ $view.addEventListener('input', e => {
 document.getElementById('addTxBtn').addEventListener('click', () => txForm());
 document.getElementById('prevMonth').addEventListener('click', () => { ui.month = shiftMonth(ui.month, -1); render(); });
 document.getElementById('nextMonth').addEventListener('click', () => { ui.month = shiftMonth(ui.month, 1); render(); });
-document.getElementById('monthLabel').addEventListener('click', () => { ui.month = monthKey(todayStr()); render(); });
+document.getElementById('monthLabel').addEventListener('click', () => { ui.month = periodKeyFor(todayStr()); render(); });
 
 function routeFromHash() {
   const v = location.hash.slice(1);

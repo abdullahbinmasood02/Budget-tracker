@@ -6,6 +6,7 @@ A personal budget tracker that runs entirely in your browser. There's no server,
 
 - **Dashboard:** this month's income, spending, net savings and how much budget is left. It also has a spending-by-category donut chart, budget progress bars, a six-month income vs. spending chart, upcoming scheduled payments and recent transactions.
 - **Transactions:** add expenses and income with a category, date and note. You can search, filter by type or category, edit, delete and export to CSV.
+- **Budget month start day:** make each budget month run from your payday (for example the 27th to the 26th) instead of the 1st, under Budgets or Settings.
 - **Budgets:** enter your expected monthly income and give each category a monthly limit. The app shows how much is still unallocated, and the dashboard warns you when a category reaches 80% or goes over its limit.
 - **Scheduled:** set up recurring rent, bills, subscriptions or salary (weekly, every 2 weeks, monthly or yearly, with an optional end date). Each item becomes a transaction automatically on its due date. You can pause and resume them, and the app lists what's coming up in the next 30 days.
 - **Goals:** create savings goals with a target and an optional deadline. The app tells you how much to save each month to hit it.
