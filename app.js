@@ -76,7 +76,7 @@ function defaultState() {
   const cat = (name, kind, i) => ({ id: uid(), name, kind, color: COLORS[i % COLORS.length], budget: 0 });
   return {
     version: 1,
-    settings: { currency: 'USD', plannedIncome: 0 },
+    settings: { currency: 'AED', plannedIncome: 0 },
     categories: [
       ...EXPENSE_CATEGORIES.map((n, i) => cat(n, 'expense', i)),
       ...INCOME_CATEGORIES.map((n, i) => cat(n, 'income', i + 1)),
@@ -84,6 +84,7 @@ function defaultState() {
     transactions: [],
     recurring: [],
     goals: [],
+    merchantRules: {},
   };
 }
 
@@ -99,6 +100,7 @@ function normalize(obj) {
     transactions: obj.transactions.map(t => ({ ...t, amount: Number(t.amount) || 0 })),
     recurring: Array.isArray(obj.recurring) ? obj.recurring : [],
     goals: Array.isArray(obj.goals) ? obj.goals : [],
+    merchantRules: obj.merchantRules && typeof obj.merchantRules === 'object' ? obj.merchantRules : {},
   };
 }
 
@@ -230,7 +232,7 @@ function txRow(t, withActions = true) {
   return `<li class="tx">
     <span class="dot" style="background:${c.color}"></span>
     <div class="tx-main">
-      <div class="tx-title">${esc(t.note || c.name)}${t.recurringId ? '<span class="tag">scheduled</span>' : ''}</div>
+      <div class="tx-title">${esc(t.note || c.name)}${t.recurringId ? '<span class="tag">scheduled</span>' : ''}${t.smsHash ? '<span class="tag">SMS</span>' : ''}</div>
       <div class="tx-sub">${esc(c.name)} · ${fmtDate(t.date)}</div>
     </div>
     <div class="tx-amt ${t.type}">${sign}${money(t.amount)}</div>
@@ -547,6 +549,14 @@ function viewSettings() {
       <button class="btn" data-action="export-csv-all">Export CSV</button>
     </div>
     <div class="setting-row">
+      <div><div>Bank SMS import</div><div class="desc">Add card payments automatically from your bank's text messages with an iPhone Shortcut. Messages are read on this device only; the card number and balance are never saved.</div></div>
+      <div class="goal-actions"><button class="btn" data-action="sms-test">Paste a message</button><button class="btn" data-action="copy-sms-link">Copy Shortcut link</button></div>
+    </div>
+    ${Object.keys(state.merchantRules).length ? `<div class="setting-row">
+      <div><div>Remembered merchants</div><div class="desc">${Object.keys(state.merchantRules).length} merchant${Object.keys(state.merchantRules).length === 1 ? '' : 's'} will use the category you last picked for them.</div></div>
+      <button class="btn" data-action="forget-rules">Forget them</button>
+    </div>` : ''}
+    <div class="setting-row">
       <div><div>Sample data</div><div class="desc">Replace everything with example data to explore the app.</div></div>
       <button class="btn" data-action="sample">Load sample data</button>
     </div>
@@ -591,12 +601,23 @@ function render() {
 }
 
 let toastTimer;
-function toast(msg) {
+/** Shows a short message; pass `action` ({ label, onClick }) to add a button such as Undo. */
+function toast(msg, action) {
   const el = document.getElementById('toast');
   el.textContent = msg;
+  if (action) {
+    const btn = document.createElement('button');
+    btn.className = 'toast-btn';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      el.hidden = true;
+      action.onClick();
+    });
+    el.appendChild(btn);
+  }
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+  toastTimer = setTimeout(() => { el.hidden = true; }, action ? 7000 : 2600);
 }
 
 /* ---------- Modal forms ---------- */
@@ -615,7 +636,7 @@ function openModal(title, body, onSubmit, submitLabel = 'Save') {
     </div>`;
   modalSubmit = onSubmit;
   $modal.showModal();
-  const first = $form.querySelector('input:not([type=radio]), select');
+  const first = $form.querySelector('input:not([type=radio]), select, textarea');
   if (first) first.focus();
 }
 
@@ -682,6 +703,8 @@ function txForm(tx) {
     const fields = { type: d.type, amount, categoryId: d.categoryId, note: d.note.trim() };
 
     if (tx) {
+      // Remember the category chosen for a bank-SMS merchant so future messages use it.
+      if (tx.merchant && fields.categoryId !== tx.categoryId) state.merchantRules[merchantKey(tx.merchant)] = fields.categoryId;
       Object.assign(tx, fields, { date: d.date });
       toast('Transaction updated');
     } else if (d.repeat) {
@@ -780,6 +803,157 @@ function goalMoneyForm(goal, direction) {
     goal.saved = Math.max(0, Math.round((goal.saved + direction * amount) * 100) / 100);
     toast(direction > 0 ? 'Nice — saved!' : 'Updated');
   }, direction > 0 ? 'Add' : 'Take out');
+}
+
+/* ---------- Bank SMS import ----------
+   An iPhone Shortcut opens the app with "#sms=<message text>". The message is read
+   here, on the device. Only the amount, merchant, date and type are kept — never
+   the card number or the balance. The part after "#" is never sent to the server. */
+
+const SMS_CURRENCY = '(AED|DHS?|USD|EUR|GBP|SAR|QAR|OMR|KWD|BHD|INR|PKR|EGP|CAD|AUD|JPY|CNY|TRY|CHF)';
+
+// Checked in order, so more specific names ("careem food") come before general ones ("careem").
+const MERCHANT_KEYWORDS = {
+  Groceries: ['supermarket', 'supermark', 'hypermarket', 'grocery', 'grocer', 'baqala', 'carrefour', 'lulu', 'spinneys', 'waitrose', 'choithram', 'union coop', 'kibsons', 'noon minutes', 'instashop'],
+  'Dining out': ['talabat', 'deliveroo', 'careem food', 'noon food', 'zomato', 'starbucks', 'costa', 'tim hortons', 'mcdonald', 'kfc', 'burger', 'pizza', 'restaurant', 'cafe', 'coffee', 'shawarma'],
+  Transport: ['careem', 'uber', 'salik', 'rta', 'nol card', 'enoc', 'adnoc', 'emarat', 'eppco', 'parking', 'taxi', 'petrol'],
+  Utilities: ['dewa', 'sewa', 'addc', 'fewa', 'etisalat', 'virgin mobile', 'empower'],
+  Health: ['pharmacy', 'aster', 'boots', 'clinic', 'hospital', 'medical', 'dental'],
+  Entertainment: ['netflix', 'spotify', 'apple.com', 'itunes', 'osn', 'shahid', 'vox', 'reel cinema', 'novo cinema', 'playstation', 'steam', 'youtube'],
+  Shopping: ['amazon', 'noon', 'namshi', 'ikea', 'centrepoint', 'max fashion', 'h&m', 'zara', 'shein', 'temu', 'daiso', 'dragon mart'],
+  Education: ['udemy', 'coursera', 'bookstore', 'university', 'school'],
+};
+
+function hashText(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+const merchantKey = name => name.toLowerCase().replace(/[^a-z]+/g, ' ').trim().split(' ').slice(0, 3).join(' ');
+
+/** "ISTANBUL SUPERMARKET, SHARJAH" → "Istanbul Supermarket" */
+function tidyMerchant(raw) {
+  let name = raw.trim();
+  if (name.includes(',')) name = name.slice(0, name.lastIndexOf(',')).trim() || name;
+  if (name === name.toUpperCase()) {
+    name = name.toLowerCase().replace(/(^|[\s(&-])([a-z])/g, (_, p, c) => p + c.toUpperCase());
+  }
+  return name.slice(0, 60);
+}
+
+/** Uses a date written in the message (UAE style, day first) or else today. */
+function smsDate(text) {
+  const today = todayStr();
+  let found = null;
+  let m = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/);
+  if (m) {
+    const y = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+    const d = new Date(y, Number(m[2]) - 1, Number(m[1]));
+    if (d.getMonth() === Number(m[2]) - 1) found = toDateStr(d);
+  } else {
+    m = text.match(/\b(\d{1,2})[\s-]?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,-]*(\d{4})?\b/i);
+    if (m) {
+      const month = 'janfebmaraprmayjunjulaugsepoctnovdec'.indexOf(m[2].toLowerCase()) / 3;
+      const d = new Date(m[3] ? Number(m[3]) : new Date().getFullYear(), month, Number(m[1]));
+      if (d.getMonth() === month) found = toDateStr(d);
+    }
+  }
+  return found && found <= today ? found : today;
+}
+
+function guessCategory(merchant, type, text = '') {
+  const learned = merchant && state.merchantRules[merchantKey(merchant)];
+  if (learned && state.categories.some(c => c.id === learned)) return learned;
+  const pool = categoriesOf(type);
+  if (type === 'income' && /\bsalary\b/i.test(text)) {
+    const salary = pool.find(c => /salary/i.test(c.name));
+    if (salary) return salary.id;
+  }
+  if (type === 'expense' && merchant) {
+    const name = merchant.toLowerCase();
+    for (const [catName, words] of Object.entries(MERCHANT_KEYWORDS)) {
+      const cat = pool.find(c => c.name === catName);
+      if (cat && words.some(w => name.includes(w))) return cat.id;
+    }
+  }
+  return (pool.find(c => /other/i.test(c.name)) || pool[0] || { id: '' }).id;
+}
+
+/** Reads a bank SMS such as "Purchase of AED 39.99 with Debit Card ending 1234 at TALABAT, DUBAI. Avl Balance is AED 500.00." */
+function parseBankSms(raw) {
+  const text = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!text) return { error: 'The message is empty.' };
+  if (/\b(otp|one[- ]time|verification code|passcode|password)\b/i.test(text)) return { error: 'This looks like a security code, not a payment.' };
+  if (/\b(declined|failed|unsuccessful|not processed)\b/i.test(text)) return { error: 'This payment did not go through, so nothing was added.' };
+
+  // The first amount is the transaction; a later one is usually the balance.
+  let currency, amountText;
+  let m = text.match(new RegExp(`\\b${SMS_CURRENCY}\\.?\\s?(\\d[\\d,]*(?:\\.\\d+)?)`, 'i'));
+  if (m) {
+    [, currency, amountText] = m;
+  } else {
+    m = text.match(new RegExp(`(\\d[\\d,]*(?:\\.\\d+)?)\\s?${SMS_CURRENCY}\\b`, 'i'));
+    if (m) [, amountText, currency] = m;
+  }
+  if (!m) return { error: "Couldn't find an amount in this message." };
+  currency = currency.toUpperCase().startsWith('DH') ? 'AED' : currency.toUpperCase();
+  const amount = parseAmount(amountText);
+  if (!amount) return { error: "Couldn't read the amount." };
+
+  const spent = /\b(purchase|debited|spent|paid|payment|withdrawn|withdrawal|charged|deducted)\b/i.test(text);
+  const received = /\b(credited|received|deposited|salary|cashback)\b/i.test(text);
+  const refund = /\b(refund(ed)?|reversal|reversed)\b/i.test(text);
+  if (!spent && !received && !refund) return { error: "Couldn't tell whether money was spent or received." };
+  const type = refund || (received && !spent) ? 'income' : 'expense';
+
+  const stop = '(?=\\.\\s|\\.$|\\s+on\\s+\\d|\\s+(?:avl|available|bal|balance|ref|with|using|via)\\b|$)';
+  const mm = text.match(new RegExp(`\\bat\\s+(?!\\d)(.+?)${stop}`, 'i'))
+    || text.match(new RegExp(`\\b(?:to|from)\\s+(?!your\\b|card\\b|a/c\\b|account\\b)(.+?)${stop}`, 'i'));
+  const merchant = mm ? tidyMerchant(mm[1]) : '';
+
+  return { type, amount, currency, merchant, date: smsDate(text), categoryId: guessCategory(merchant, type, text), hash: hashText(text) };
+}
+
+/** Saves a parsed message as a transaction. Returns null if that message was already added. */
+function addSmsTransaction(p) {
+  if (state.transactions.some(t => t.smsHash === p.hash)) return null;
+  const tx = {
+    id: uid(), created: Date.now(), type: p.type, amount: p.amount, categoryId: p.categoryId,
+    date: p.date, note: p.merchant, merchant: p.merchant, smsHash: p.hash,
+  };
+  if (p.currency !== state.settings.currency) tx.note = `${p.merchant} (${p.currency} ${p.amount.toFixed(2)})`.trim();
+  state.transactions.push(tx);
+  save();
+  return tx;
+}
+
+function announceSmsTransaction(tx, p) {
+  const msg = `${tx.type === 'income' ? 'Received' : 'Added'} ${money(tx.amount)}${tx.merchant ? ` · ${tx.merchant}` : ''} → ${catById(tx.categoryId).name}`;
+  toast(p.currency !== state.settings.currency ? `${msg} (message was in ${p.currency})` : msg, {
+    label: 'Undo',
+    onClick: () => {
+      state.transactions = state.transactions.filter(t => t.id !== tx.id);
+      save();
+      render();
+      toast('Removed');
+    },
+  });
+}
+
+/** Handles "#sms=…" links from the Shortcut. Returns a function that shows the result, or null. */
+function handleIncomingSms() {
+  const m = location.hash.match(/^#sms=([\s\S]*)$/);
+  if (!m) return null;
+  let text = m[1];
+  try { text = decodeURIComponent(text.replace(/\+/g, ' ')); } catch { /* keep the raw text */ }
+  // Take the message out of the address bar straight away.
+  history.replaceState(null, '', `${location.pathname}${location.search}#dashboard`);
+  const p = parseBankSms(text);
+  if (p.error) return () => toast(p.error);
+  const tx = addSmsTransaction(p);
+  ui.month = monthKey(p.date);
+  return tx ? () => announceSmsTransaction(tx, p) : () => toast('This message was already added.');
 }
 
 /* ---------- Import / export ---------- */
@@ -941,6 +1115,24 @@ const ACTIONS = {
   'export-csv-all': () => exportCsv(state.transactions, 'transactions-all.csv'),
   'export-json': () => download(`budget-backup-${todayStr()}.json`, JSON.stringify(state, null, 2), 'application/json'),
   'import-json': () => document.getElementById('importFile').click(),
+  'sms-test': () => openModal('Add from a bank message', `<label>Paste the text message
+      <textarea name="sms" rows="5" placeholder="Purchase of AED 25.00 with Debit Card ending 1234 at …"></textarea></label>`, d => {
+    const p = parseBankSms(d.sms);
+    if (p.error) return formError(p.error);
+    const tx = addSmsTransaction(p);
+    if (!tx) return formError('This message was already added.');
+    setTimeout(() => announceSmsTransaction(tx, p), 0);
+  }, 'Add'),
+  'copy-sms-link': () => {
+    const link = `${location.origin}${location.pathname}#sms=`;
+    if (navigator.clipboard) navigator.clipboard.writeText(link).then(() => toast('Link copied'), () => prompt('Copy this link:', link));
+    else prompt('Copy this link:', link);
+  },
+  'forget-rules': () => {
+    state.merchantRules = {};
+    toast('Forgotten');
+    return true;
+  },
   'sample': () => {
     const hasData = state.transactions.length || state.recurring.length || state.goals.length;
     if (hasData && !confirm('Replace all current data with sample data?')) return;
@@ -1006,7 +1198,11 @@ function routeFromHash() {
   ui.view = VIEWS.includes(v) ? v : 'dashboard';
   render();
 }
-window.addEventListener('hashchange', routeFromHash);
+window.addEventListener('hashchange', () => {
+  const notify = handleIncomingSms();
+  routeFromHash();
+  if (notify) notify();
+});
 
 // Keep schedules up to date if the tab stays open past midnight.
 document.addEventListener('visibilitychange', () => {
@@ -1020,5 +1216,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 const added = runSchedules();
+const smsNotify = handleIncomingSms();
 routeFromHash();
-if (added) toast(`${added} scheduled transaction${added === 1 ? '' : 's'} added`);
+if (smsNotify) smsNotify();
+else if (added) toast(`${added} scheduled transaction${added === 1 ? '' : 's'} added`);

@@ -32,6 +32,24 @@ Once the app is hosted at an `https://` address (for example GitHub Pages), you 
 
 The app gets its own icon, opens full screen and works offline. Android users can do the same from Chrome's menu ("Install app").
 
+## Automatic logging from bank SMS (iPhone)
+
+The app can add card payments by itself from your bank's text messages (built around Liv's wording, e.g. *"Purchase of AED 39.99 with Debit Card ending 1234 at TALABAT, DUBAI. Avl Balance is AED 500.00."*). It picks out the amount, the merchant and the date, guesses the category, and remembers your choice whenever you change a merchant's category. Only the amount, merchant, date and type are saved. The card number and balance are thrown away, and the message never leaves your phone.
+
+**Set up the Shortcut once:**
+
+1. Open the **Shortcuts** app → **Automation** tab → **+** → **Message**.
+2. Under **Sender**, choose **Liv**. Select **Run Immediately**, then tap **Next**.
+3. Choose **Create New Shortcut** (or **New Blank Automation**) and add these three actions:
+   1. **URL Encode**: tap its input, choose **Shortcut Input**, then tap it again and pick **Content**.
+   2. **Text**: type `https://abdullahbinmasood02.github.io/Budget-tracker/#sms=`, then insert the **URL Encoded Text** variable right after the `=`.
+   3. **Open URLs**: its input should be the **Text** from the previous step.
+4. Tap **Done**.
+
+From then on, every Liv SMS opens the app and the payment is added, with an **Undo** button in case it's wrong. To check a message by hand, use **Settings → Paste a message**.
+
+**Important:** on iPhone, a home-screen web app keeps its data separately from Safari, and Shortcuts opens links in Safari. Keep everything in one place by using the app in Safari. If your iPhone's **Add to Home Screen** sheet has an **Open as Web App** switch, turn it off so the icon opens Safari.
+
 ## Your data
 
 Everything is saved in your browser's `localStorage` on the device you use, so nothing is sent anywhere. Clearing your browser data erases it, so use **Settings → Download backup** regularly. You can also restore that file on another device.

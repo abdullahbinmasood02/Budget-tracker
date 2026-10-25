@@ -241,6 +241,11 @@ input[type="text"], input[type="number"], input[type="date"], input[type="search
   border: 1px solid var(--border); background: var(--surface);
   min-height: 38px;
 }
+textarea {
+  width: 100%; padding: 8px 10px; border-radius: 9px; resize: vertical;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font: inherit; font-size: 0.95rem;
+}
 input[type="color"] { width: 56px; height: 38px; padding: 2px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .filters select { width: auto; }
 
@@ -279,7 +284,13 @@ label > input, label > select { color: var(--text); font-size: 0.95rem; }
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
   background: var(--text); color: var(--bg);
   padding: 10px 16px; border-radius: 10px; font-size: 0.9rem; z-index: 20;
-  max-width: calc(100vw - 32px);
+  width: max-content; max-width: min(460px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 12px;
+}
+.toast[hidden] { display: none; }
+.toast-btn {
+  border: 0; background: none; color: var(--accent); font-weight: 700;
+  cursor: pointer; padding: 2px 4px; white-space: nowrap;
 }
 
 /* ---------- Small screens ---------- */
@@ -295,5 +306,5 @@ label > input, label > select { color: var(--text); font-size: 0.95rem; }
   .form-row { grid-template-columns: 1fr; }
   .view { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   /* iPhone zooms into inputs smaller than 16px; keep them at 16px. */
-  input, select, label > input, label > select { font-size: 16px; }
+  input, select, textarea, label > input, label > select { font-size: 16px; }
 }
