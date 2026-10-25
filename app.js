@@ -1015,6 +1015,10 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------- Start ---------- */
 
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(err => console.warn('Offline mode unavailable', err));
+}
+
 const added = runSchedules();
 routeFromHash();
 if (added) toast(`${added} scheduled transaction${added === 1 ? '' : 's'} added`);

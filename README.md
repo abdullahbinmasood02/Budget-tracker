@@ -23,6 +23,15 @@ python3 -m http.server 8000
 
 It can also be hosted for free as a static site, for example with GitHub Pages: in the repository go to Settings → Pages and deploy from the `main` branch.
 
+## Installing on iPhone
+
+Once the app is hosted at an `https://` address (for example GitHub Pages), you can install it:
+
+1. Open the address in **Safari** on your iPhone.
+2. Tap the **Share** button, then **Add to Home Screen**, then **Add**.
+
+The app gets its own icon, opens full screen and works offline. Android users can do the same from Chrome's menu ("Install app").
+
 ## Your data
 
 Everything is saved in your browser's `localStorage` on the device you use, so nothing is sent anywhere. Clearing your browser data erases it, so use **Settings → Download backup** regularly. You can also restore that file on another device.
