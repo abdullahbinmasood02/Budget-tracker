@@ -814,13 +814,13 @@ const SMS_CURRENCY = '(AED|DHS?|USD|EUR|GBP|SAR|QAR|OMR|KWD|BHD|INR|PKR|EGP|CAD|
 
 // Checked in order, so more specific names ("careem food") come before general ones ("careem").
 const MERCHANT_KEYWORDS = {
-  Groceries: ['supermarket', 'supermark', 'hypermarket', 'grocery', 'grocer', 'baqala', 'carrefour', 'lulu', 'spinneys', 'waitrose', 'choithram', 'union coop', 'kibsons', 'noon minutes', 'instashop'],
-  'Dining out': ['talabat', 'deliveroo', 'careem food', 'noon food', 'zomato', 'starbucks', 'costa', 'tim hortons', 'mcdonald', 'kfc', 'burger', 'pizza', 'restaurant', 'cafe', 'coffee', 'shawarma'],
+  Groceries: ['supermarket', 'supermark', 'hypermarket', 'grocery', 'grocer', 'baqala', 'carrefour', 'lulu', 'spinneys', 'waitrose', 'choithram', 'union coop', 'kibsons', 'noon minutes', 'instashop', 'meat', 'butcher', 'madina mini', 'mini mart'],
+  'Dining out': ['talabat', 'deliveroo', 'careem food', 'noon food', 'zomato', 'starbucks', 'costa', 'tim hortons', 'mcdonald', 'kfc', 'burger', 'pizza', 'restaurant', 'cafe', 'coffee', 'shawarma', 'falafel', 'falafil', 'sweets', 'bakery'],
   Transport: ['careem', 'uber', 'salik', 'rta', 'nol card', 'enoc', 'adnoc', 'emarat', 'eppco', 'parking', 'taxi', 'petrol'],
-  Utilities: ['dewa', 'sewa', 'addc', 'fewa', 'etisalat', 'virgin mobile', 'empower'],
+  Utilities: ['dewa', 'sewa', 'addc', 'fewa', 'etisalat', 'virgin mobile', 'empower', 'e& '],
   Health: ['pharmacy', 'aster', 'boots', 'clinic', 'hospital', 'medical', 'dental'],
   Entertainment: ['netflix', 'spotify', 'apple.com', 'itunes', 'osn', 'shahid', 'vox', 'reel cinema', 'novo cinema', 'playstation', 'steam', 'youtube'],
-  Shopping: ['amazon', 'noon', 'namshi', 'ikea', 'centrepoint', 'max fashion', 'h&m', 'zara', 'shein', 'temu', 'daiso', 'dragon mart'],
+  Shopping: ['amazon', 'noon', 'namshi', 'ikea', 'centrepoint', 'max fashion', 'h&m', 'zara', 'shein', 'temu', 'daiso', 'dragon mart', 'landmark', 'brands for less', 'adidas', 'nike', 'splash', 'home centre'],
   Education: ['udemy', 'coursera', 'bookstore', 'university', 'school'],
 };
 
@@ -939,6 +939,42 @@ function announceSmsTransaction(tx, p) {
       toast('Removed');
     },
   });
+}
+
+/** Handles "#import=…" links that carry a batch of past transactions
+ * as base64 JSON: { t: [[date, "e"|"i", amount, merchant, categoryName, note?], …] }.
+ * Rows already in the app (same date, type, amount and merchant) are skipped. */
+function handleIncomingImport() {
+  const m = location.hash.match(/^#import=([\s\S]*)$/);
+  if (!m) return null;
+  history.replaceState(null, '', `${location.pathname}${location.search}#transactions`);
+  let rows;
+  try {
+    rows = JSON.parse(atob(decodeURIComponent(m[1]).replace(/-/g, '+').replace(/_/g, '/'))).t;
+    if (!Array.isArray(rows)) throw new Error('no rows');
+  } catch {
+    return () => toast('This import link is damaged. Copy the whole link and try again.');
+  }
+  if (!confirm(`Add ${rows.length} past transactions to your budget?`)) return null;
+
+  let added = 0;
+  for (const [date, kind, amount, merchant, catName, note] of rows) {
+    const type = kind === 'i' ? 'income' : 'expense';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(amount > 0)) continue;
+    const name = String(merchant || '').toLowerCase();
+    const exists = state.transactions.some(t => t.date === date && t.type === type
+      && Math.abs(t.amount - amount) < 0.005 && (t.merchant || t.note || '').toLowerCase() === name);
+    if (exists) continue;
+    const cat = categoriesOf(type).find(c => c.name.toLowerCase() === String(catName).toLowerCase());
+    state.transactions.push({
+      id: uid(), created: Date.now(), type, amount, categoryId: cat ? cat.id : guessCategory(merchant, type),
+      date, note: note || merchant, merchant,
+    });
+    added++;
+  }
+  save();
+  const skipped = rows.length - added;
+  return () => toast(`Imported ${added} transaction${added === 1 ? '' : 's'}${skipped ? ` · ${skipped} already there` : ''}`);
 }
 
 /** Handles "#sms=…" links from the Shortcut. Returns a function that shows the result, or null. */
@@ -1199,7 +1235,7 @@ function routeFromHash() {
   render();
 }
 window.addEventListener('hashchange', () => {
-  const notify = handleIncomingSms();
+  const notify = handleIncomingSms() || handleIncomingImport();
   routeFromHash();
   if (notify) notify();
 });
@@ -1216,7 +1252,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
 }
 
 const added = runSchedules();
-const smsNotify = handleIncomingSms();
+const smsNotify = handleIncomingSms() || handleIncomingImport();
 routeFromHash();
 if (smsNotify) smsNotify();
 else if (added) toast(`${added} scheduled transaction${added === 1 ? '' : 's'} added`);
