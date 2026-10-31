@@ -11,7 +11,7 @@ const EXPENSE_CATEGORIES = ['Housing', 'Groceries', 'Transport', 'Utilities', 'D
 const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Other income'];
 const FREQUENCIES = { weekly: 'Weekly', biweekly: 'Every 2 weeks', monthly: 'Monthly', yearly: 'Yearly' };
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'PKR', 'INR', 'AED', 'SAR', 'CAD', 'AUD', 'JPY', 'CNY', 'TRY', 'BDT', 'NGN'];
-const VIEWS = ['dashboard', 'transactions', 'budgets', 'scheduled', 'goals', 'settings'];
+const VIEWS = ['dashboard', 'transactions', 'budgets', 'scheduled', 'forecast', 'goals', 'settings'];
 const MONTH_VIEWS = ['dashboard', 'transactions', 'budgets'];
 
 /* ---------- Small helpers ---------- */
@@ -83,7 +83,7 @@ function defaultState() {
   const cat = (name, kind, i) => ({ id: uid(), name, kind, color: COLORS[i % COLORS.length], budget: 0 });
   return {
     version: 1,
-    settings: { currency: 'AED', plannedIncome: 0 },
+    settings: { currency: 'AED', plannedIncome: 0, openingBalance: 0 },
     categories: [
       ...EXPENSE_CATEGORIES.map((n, i) => cat(n, 'expense', i)),
       ...INCOME_CATEGORIES.map((n, i) => cat(n, 'income', i + 1)),
@@ -136,6 +136,7 @@ const ui = {
   search: '',
   filterType: '',
   filterCat: '',
+  forecast: 'period',
 };
 
 ui.month = periodKeyFor(todayStr());
@@ -177,7 +178,11 @@ function runSchedules() {
 
 /** Lists scheduled items that will happen within the next `days` days. */
 function upcoming(days) {
-  const limit = addDays(todayStr(), days);
+  return upcomingUntil(addDays(todayStr(), days));
+}
+
+/** Lists scheduled items due after today and on or before `limit` (YYYY-MM-DD). */
+function upcomingUntil(limit) {
   const items = [];
   for (const r of state.recurring) {
     if (r.paused) continue;
@@ -232,6 +237,15 @@ function monthStats(key) {
   stats.net = stats.income - stats.expense;
   return stats;
 }
+
+/** Money in the account today: the starting balance plus everything received minus everything spent. */
+function currentBalance() {
+  const today = todayStr();
+  const net = sum(state.transactions.filter(t => t.date <= today), t => (t.type === 'income' ? t.amount : -t.amount));
+  return Math.round(((Number(state.settings.openingBalance) || 0) + net) * 100) / 100;
+}
+
+const daysBetween = (a, b) => Math.round((parseDate(b) - parseDate(a)) / 864e5);
 
 function defaultDateForMonth() {
   const today = todayStr();
@@ -531,6 +545,65 @@ function viewScheduled() {
   </section>`;
 }
 
+function viewForecast() {
+  const today = todayStr();
+  const end = ui.forecast === 'period' ? periodEnd(periodKeyFor(today)) : addDays(today, Number(ui.forecast));
+  const items = upcomingUntil(end);
+  const balance = currentBalance();
+  const scheduledOut = sum(items.filter(i => i.type === 'expense'), i => i.amount);
+  const scheduledIn = sum(items.filter(i => i.type === 'income'), i => i.amount);
+  const afterExpenses = balance - scheduledOut;
+  const afterAll = afterExpenses + scheduledIn;
+  const days = daysBetween(today, end) + 1;
+  const perDay = afterExpenses / days;
+
+  // Walk through the scheduled items in date order to show the balance after each one.
+  let running = balance;
+  let lowest = { value: balance, date: today };
+  const rows = items.map(i => {
+    running += i.type === 'income' ? i.amount : -i.amount;
+    if (running < lowest.value) lowest = { value: running, date: i.date };
+    const c = catById(i.categoryId);
+    return `<li class="tx">
+      <span class="dot" style="background:${c.color}"></span>
+      <div class="tx-main">
+        <div class="tx-title">${esc(i.note || c.name)}</div>
+        <div class="tx-sub">${fmtDate(i.date)} · ${FREQUENCIES[i.frequency]}</div>
+      </div>
+      <div>
+        <div class="tx-amt ${i.type}">${i.type === 'income' ? '+' : '−'}${money(i.amount)}</div>
+        <div class="tx-bal">${money(running)} left</div>
+      </div>
+    </li>`;
+  }).join('');
+
+  const horizons = [['period', `Until ${fmtDate(periodEnd(periodKeyFor(today)))} (end of budget month)`], ['30', 'Next 30 days'], ['60', 'Next 60 days'], ['90', 'Next 90 days']]
+    .map(([v, label]) => `<option value="${v}" ${ui.forecast === v ? 'selected' : ''}>${label}</option>`).join('');
+
+  return `<section class="card">
+    <div class="card-head"><h2>What you'll have left</h2></div>
+    <p class="muted" style="margin-bottom:12px">Your balance now minus every scheduled payment due before the date you pick.</p>
+    <label>Look ahead<select id="forecastHorizon">${horizons}</select></label>
+  </section>
+  <section class="stats">
+    <div class="stat"><div class="stat-label">Balance now</div><div class="stat-value">${money(balance)}</div>
+      <div class="stat-sub"><a href="#forecast" data-action="set-balance">Doesn't match your bank? Correct it</a></div></div>
+    <div class="stat"><div class="stat-label">Scheduled payments</div><div class="stat-value">${scheduledOut ? `−${money(scheduledOut)}` : money(0)}</div>
+      <div class="stat-sub">${items.filter(i => i.type === 'expense').length} due by ${fmtDate(end)}</div></div>
+    <div class="stat forecast-result"><div class="stat-label">Left after scheduled payments</div>
+      <div class="stat-value ${afterExpenses < 0 ? 'neg' : 'pos'}">${money(afterExpenses)}</div>
+      <div class="stat-sub">${afterExpenses > 0 ? `≈ ${money(perDay)} a day for ${days} day${days === 1 ? '' : 's'}` : 'Not enough to cover them'}</div></div>
+    ${scheduledIn ? `<div class="stat"><div class="stat-label">Including expected income</div>
+      <div class="stat-value ${afterAll < 0 ? 'neg' : ''}">${money(afterAll)}</div>
+      <div class="stat-sub">+${money(scheduledIn)} scheduled to come in</div></div>` : ''}
+  </section>
+  ${lowest.value < 0 ? `<section class="alerts"><div class="alert danger">Your balance would drop to <strong>${money(lowest.value)}</strong> on ${fmtDate(lowest.date)}. Move money in or reschedule a payment before then.</div></section>` : ''}
+  <section class="card">
+    <div class="card-head"><h2>Coming up until ${fmtDate(end)}</h2><button class="btn small" data-action="add-rule">+ Schedule</button></div>
+    ${rows ? `<ul class="tx-list">${rows}</ul>` : `<p class="empty">No scheduled payments before ${fmtDate(end)}. Add rent, bills or subscriptions under Scheduled to see what you'll have left after them.</p>`}
+  </section>`;
+}
+
 function viewGoals() {
   const cards = state.goals.map(g => {
     const pct = g.target > 0 ? Math.min(100, (g.saved / g.target) * 100) : 0;
@@ -616,6 +689,7 @@ const VIEW_RENDERERS = {
   transactions: viewTransactions,
   budgets: viewBudgets,
   scheduled: viewScheduled,
+  forecast: viewForecast,
   goals: viewGoals,
   settings: viewSettings,
 };
@@ -1217,6 +1291,13 @@ const ACTIONS = {
     return true;
   },
   'add-rule': () => ruleForm(),
+  'set-balance': () => openModal('Correct your balance', `<p class="muted">Enter the balance your bank shows right now. The app keeps your transactions as they are and adjusts its starting balance so the two match.</p>
+      <label>Balance today<input name="balance" type="number" step="any" inputmode="decimal" required value="${currentBalance()}"></label>`, d => {
+    const actual = parseFloat(String(d.balance).replace(/,/g, ''));
+    if (!Number.isFinite(actual)) return formError('Enter your balance.');
+    state.settings.openingBalance = Math.round(((Number(state.settings.openingBalance) || 0) + actual - currentBalance()) * 100) / 100;
+    toast('Balance updated');
+  }),
   'edit-rule': id => ruleForm(findIn('recurring', id)),
   'toggle-rule': id => {
     const r = findIn('recurring', id);
@@ -1308,6 +1389,10 @@ $view.addEventListener('change', e => {
   } else if (el.dataset.setting === 'currency') {
     state.settings.currency = el.value;
     toast(`Currency set to ${el.value}`);
+  } else if (el.id === 'forecastHorizon') {
+    ui.forecast = el.value;
+    render();
+    return;
   } else if (el.id === 'filterType') {
     ui.filterType = el.value;
   } else if (el.id === 'filterCat') {

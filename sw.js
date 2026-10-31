@@ -1,6 +1,6 @@
 // Caches the app so it opens instantly and works offline.
 // Bump CACHE when any of the files below change so phones pick up the update.
-const CACHE = 'budget-tracker-v4';
+const CACHE = 'budget-tracker-v5';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', event => {

@@ -219,6 +219,9 @@ button, input, select { font: inherit; color: inherit; }
 .tx-amt.income { color: var(--income); }
 .tx-amt.expense { color: var(--text); }
 .tx-actions { display: flex; }
+.tx-bal { color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; text-align: right; }
+.forecast-result { grid-column: 1 / -1; }
+.forecast-result .stat-value { font-size: 1.7rem; }
 
 .tag {
   display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 1px 6px;
